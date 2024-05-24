@@ -1,91 +1,47 @@
-[org 0x7c00]                        
-KERNEL_LOCATION equ 0x1000
-                                    
+[org 0x7c00]
+[bits 16]
 
-mov [BOOT_DISK], dl                 
+STAGE_2_LOC equ 0x7e00
 
-                                    
-xor ax, ax                          
-mov es, ax
-mov ds, ax
-mov bp, 0x8000
-mov sp, bp
+_main16:
+	;save boot disk number
+	mov [BOOT_DISK], dl
 
-mov bx, KERNEL_LOCATION
-mov dh, 2
-
-mov ah, 0x02
-mov al, dh 
-mov ch, 0x00
-mov dh, 0x00
-mov cl, 0x02
-mov dl, [BOOT_DISK]
-int 0x13                ; no error management, do your homework!
-
-                                    
-mov ah, 0x0
-mov al, 0x3
-int 0x10                ; text mode
-
-
-CODE_SEG equ GDT_code - GDT_start
-DATA_SEG equ GDT_data - GDT_start
-
-cli
-lgdt [GDT_descriptor]
-mov eax, cr0
-or eax, 1
-mov cr0, eax
-jmp CODE_SEG:start_protected_mode
-
-jmp $
-                                    
-BOOT_DISK: db 0
-
-GDT_start:
-    GDT_null:
-        dd 0x0
-        dd 0x0
-
-    GDT_code:
-        dw 0xffff
-        dw 0x0
-        db 0x0
-        db 0b10011010
-        db 0b11001111
-        db 0x0
-
-    GDT_data:
-        dw 0xffff
-        dw 0x0
-        db 0x0
-        db 0b10010010
-        db 0b11001111
-        db 0x0
-
-GDT_end:
-
-GDT_descriptor:
-    dw GDT_end - GDT_start - 1
-    dd GDT_start
-
-
-[bits 32]
-start_protected_mode:
-    mov ax, DATA_SEG
+	;set up segment registers
+	cli
+	mov ax, 0x00
 	mov ds, ax
-	mov ss, ax
 	mov es, ax
-	mov fs, ax
-	mov gs, ax
+	mov ss, ax
+	mov sp, 0x7C00
+	sti
+    
 	
-	mov ebp, 0x90000		; 32 bit stack base pointer
-	mov esp, ebp
+	;clear the screen
+	mov ah, 0x00
+	mov al, 0x03
+	int 0x10
 
-    jmp KERNEL_LOCATION
+	xor bx, bx
+    mov es, bx
 
-                                     
- 
-times 510-($-$$) db 0              
-dw 0xaa55
+	;read the stage 2 bootloader (2 sectors)
+	mov bx, STAGE_2_LOC
+	mov al, 0x02		; read two sectors
+	mov ch, 0x00		; from cylinder 0
+	mov cl, 0x02		; from sector 2 (counting from 1)
+	mov dh, 0x00		; from head 0
+	call disk_read
 
+	jmp STAGE_2_LOC
+
+	jmp $
+
+%include"Bootloader/print_string.asm"
+%include"Bootloader/print_dec.asm"
+%include"Bootloader/disk.asm"
+
+
+
+times 510-($-$$) db 0x00
+dw 0xAA55

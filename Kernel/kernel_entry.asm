@@ -5,6 +5,7 @@ section .entry
 [global start_kernel]
 
 start_kernel:
+	mov [MemSize], bx
 	call main
 
 	jmp $
@@ -12,8 +13,9 @@ start_kernel:
 section .text
 
 section .data
-	global MemSize
-	MemSize db 0, 0
+
+global MemSize
+MemSize db 0, 0
 
 section .rodata
 

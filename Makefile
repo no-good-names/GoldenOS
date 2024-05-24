@@ -1,36 +1,58 @@
-# OS Dev makefile for building the kernel and booting it with QEMU
-
 CC = i386-elf-gcc
 LD = i386-elf-ld
 OBJCOPY = i386-elf-objcopy
 QEMU = qemu-system-i386
 
-BIN = bin
+SRC=$(shell pwd)
+## Directory to write binaries to
+BIN=./bin
+## Compiler Flags
+FLAGS=-ffreestanding -m32 -g 
 
-all: build
+## C source files
+CSRC := $(shell find ./ -name "*.c")
+## C target files
+CTAR := $(patsubst %.c,%.o,$(CSRC))
 
-build: boot kernel
-	$(LD) -o $(BIN)/kernel.elf -TKernel/kernel.ld $(BIN)/kernel_entry.o $(BIN)/kernel_c.o
+## Assembly source files that must be compiled to ELF
+ASMSRC :=  ./Bootloader/gdt.asm ./Kernel/kernel_entry.asm
+## Assembly target files
+ASMTAR := $(patsubst %.asm,%.o,$(ASMSRC))
+
+all: prebuild build
+
+debug: prebuild build
+	$(OBJCP) --only-keep-debug $(BIN)/kernel.elf $(BIN)/kernel.sym
+	gdb -ex "target remote localhost:1234" -ex "symbol-file $(BIN)/kernel.sym"
+
+	qemu-system-x86_64 -drive format=raw,file=osimage_formated.bin,index=0,if=floppy -hda disk.img -m 128M -s -S &
+
+prebuild:	## Prebuild instructions
+	rm -rf $(BIN)
+	mkdir $(BIN)
+
+build: boot $(ASMTAR) $(CTAR)
+	$(LD) -o $(BIN)/kernel.elf -TKernel/kernel.ld $(shell find ./ -name "*.o" | xargs)
 	$(OBJCOPY) -O binary $(BIN)/kernel.elf $(BIN)/kernel.bin
-	cat bin/boot.bin bin/kernel.bin bin/zeros.bin  > bin/os-image.bin
-	dd if=/dev/zero of=bin/os-image_formated.bin bs=512 count=2880 > /dev/null
-	dd if=bin/os-image.bin of=bin/os-image_formated.bin conv=notrunc > /dev/null
-
+	cat $(BIN)/boot.bin $(BIN)/boot_2.bin > $(BIN)/both_boot.bin
+	cat $(BIN)/both_boot.bin $(BIN)/kernel.bin > $(BIN)/short.bin
+	cat $(BIN)/short.bin $(BIN)/zeros.bin > $(BIN)/os_image.bin
+	dd if=/dev/zero of=$(BIN)/osimage_formated.img bs=512 count=2880 >/dev/null
+	dd if=$(BIN)/os_image.bin of=$(BIN)/osimage_formated.img conv=notrunc >/dev/null
 
 boot:
-	nasm Bootloader/boot.asm -f bin -o bin/boot.bin
-	nasm "Kernel/zeros.asm" -f bin -o "bin/zeros.bin"
+	nasm Bootloader/boot.asm -f bin -o $(BIN)/boot.bin -i Bootloader
+	nasm Bootloader/boot_2.asm -f bin -o $(BIN)/boot_2.bin -i Bootloader
+	nasm Kernel/zeros.asm -f bin -o $(BIN)/zeros.bin
 
-kernel:
-	nasm "Kernel/kernel_entry.asm" -f elf -o "bin/kernel_entry.o"
-	$(CC) -ffreestanding -m32 -g -c "Kernel/kernel.c" -o "bin/kernel_c.o"
-	$(LD) -o bin/kernel_entry.bin -Ttext 0x1000 bin/kernel_entry.o bin/kernel_c.o --oformat binary
+%.o: %.c
+	mkdir -p $(BIN)/$(shell dirname $<)
+	$(CC) $(FLAGS) -c $< -o $(BIN)/$(subst .c,.o,$<) $(addprefix -I ,$(shell dirname $(shell echo $(CSRC) | tr ' ' '\n' | sort -u | xargs)))
 
-run: build
-	$(QEMU) -drive format=raw,file=bin/os-image_formated.bin,index=0,if=floppy, -m 128M
+%.o : %.asm
+	mkdir -p $(BIN)/$(shell dirname $<)
+	nasm $< -f elf -o $(BIN)/$(subst .asm,.o,$<) $(addprefix -i ,$(shell dirname $(shell echo $(CSRC) | tr ' ' '\n' | sort -u | xargs)))
 
-clean:
-	rm -rf bin/*
-
-.PHONY: all run clean
-
+run: prebuild build
+#	qemu-system-x86_64 -drive format=raw,file=os_image.bin,index=0,if=floppy,  -m 128M
+	qemu-system-x86_64 -d cpu_reset -drive format=raw,file=$(BIN)/osimage_formated.img,index=0,if=floppy -m 128M
